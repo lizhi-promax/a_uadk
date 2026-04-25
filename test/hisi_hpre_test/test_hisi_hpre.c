@@ -25,10 +25,17 @@
 #include "../../include/wd_dh.h"
 #include "../../include/wd_ecc.h"
 #include "../../include/drv/wd_ecc_drv.h"
+#include <openssl/bn.h>
+#include <openssl/rsa.h>
+#include <openssl/dh.h>
+#include <openssl/ec.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/objects.h>
+#include <openssl/err.h>
+#include <openssl/crypto.h>
 
 #define HPRE_TST_PRT		printf
-#define BN_ULONG		unsigned long
-#define RSA_NO_PADDING		3
 #define HPRE_TST_MAX_Q		1
 #define HPRE_PADDING_SZ		16
 #define TEST_MAX_THRD		256
@@ -45,34 +52,6 @@ typedef unsigned int u32;
 
 pthread_mutex_t mute;
 
-struct bignum_st {
-	BN_ULONG *d;                /* Pointer to an array of 'BN_BITS2' bit
-					 * chunks. */
-	int top;                    /* Index of last used d +1. */
-	/* The next are internal book keeping for bn_expand. */
-	int dmax;                   /* Size of the d array. */
-	int neg;                    /* one if the number is negative */
-	int flags;
-};
-
-typedef struct {
-    int nid;
-    const char *comment;
-} EC_builtin_curve;
-
-/* stub structures */
-struct rsa_st {
-	int xxx;
-};
-
-struct dh_st {
-	int xxx;
-};
-
-struct bn_gencb_st {
-	int xxx;
-};
-
 struct test_hpre_pthread_dt {
 	int cpu_id;
 	enum alg_op_type op_type;
@@ -83,63 +62,6 @@ struct test_hpre_pthread_dt {
 	u32 send_task_num;
 	u32 recv_task_num;
 };
-
-struct ec_key_st {
-	int xxx;
-};
-
-struct ec_point_st {
-	int xxx;
-};
-
-struct ec_group_st {
-	int xxx;
-};
-
-struct ec_method_st {
-	int xxx;
-};
-
-struct ec_sig_st {
-	int xxx;
-};
-
-struct evp_md_st {
-	int xxx;
-};
-
-struct evp_md_ctx_st {
-	int xxx;
-};
-
-struct bn_ctx_st {
-	int xxx;
-};
-
-typedef struct rand_meth_st {
-	int (*seed)(const void *buf, int num);
-	int (*bytes)(unsigned char *buf, int num);
-	void (*cleanup)(void);
-	int (*add)(const void *buf, int num, double entropy);
-	int (*pseudorand)(unsigned char *buf, int num);
-	int (*status)(void);
-}RAND_METHOD;
-
-/* stub definitions */
-typedef struct rsa_st RSA;
-typedef struct dh_st DH;
-typedef struct bignum_st BIGNUM;
-typedef struct bn_gencb_st BN_GENCB;
-
-typedef struct ec_key_st EC_KEY;
-typedef struct ec_point_st EC_POINT;
-typedef struct ec_group_st EC_GROUP;
-typedef struct ec_method_st EC_METHOD;
-typedef struct ec_sig_st ECDSA_SIG;
-
-typedef struct evp_md_st EVP_MD;
-typedef struct evp_md_ctx_st EVP_MD_CTX;
-typedef struct bn_ctx_st BN_CTX;
 
 enum ecc_msg_type {
 	MSG_PLAINTEXT,
@@ -247,11 +169,7 @@ static struct hpre_test_config g_config = {
 	.k_len = INVALID_LEN,
 	.hash_type = HASH_SM3,
 	.rand_type = RAND_CB,
-	#ifdef HAVE_CRYPTO
-	.check = 1,
-	#else
-	.check = 0,
-	#endif
+		.check = 1,
 	.data_from = 0,
 	.perf_test = 0,
 	.with_log = 0,
@@ -349,144 +267,13 @@ struct hpre_rsa_test_key_in {
 #define ED448_KEYLEN         57
 #define MAX_KEYLEN  ED448_KEYLEN
 
-/* **************** x25519/x448 *******************/
-#define NID_X25519              1034
-#define NID_X448                1035
-# define EVP_PKEY_X25519 NID_X25519
-# define EVP_PKEY_X448 NID_X448
-#define EVP_PKEY_SM2		1172
 
 typedef struct {
 	unsigned char pubkey[MAX_KEYLEN];
 	unsigned char *privkey;
 } ECX_KEY;
 
-struct evp_pkey_ctx_st;
-typedef struct evp_pkey_ctx_st EVP_PKEY_CTX;
 
-struct evp_pkey_asn1_method_st {
-	int pkey_id;
-	int pkey_base_id;
-	unsigned long pkey_flags;
-};
-typedef struct evp_pkey_asn1_method_st EVP_PKEY_ASN1_METHOD;
-
-struct engine_st {
-};
-
-typedef struct engine_st ENGINE;
-//typedef _Atomic int CRYPTO_REF_COUNT;
-typedef int CRYPTO_REF_COUNT;
-
-struct evp_pkey_st {
-	int type;
-	int save_type;
-	CRYPTO_REF_COUNT references;
-	const EVP_PKEY_ASN1_METHOD *ameth;
-	ENGINE *engine;
-	ENGINE *pmeth_engine; /* If not NULL public key ENGINE to use */
-	union {
-		void *ptr;
-		# ifndef OPENSSL_NO_RSA
-			struct rsa_st *rsa;     /* RSA */
-		# endif
-		# ifndef OPENSSL_NO_DSA
-			struct dsa_st *dsa;     /* DSA */
-		# endif
-		# ifndef OPENSSL_NO_DH
-			struct dh_st *dh;       /* DH */
-		# endif
-		# ifndef OPENSSL_NO_EC
-			struct ec_key_st *ec;   /* ECC */
-			ECX_KEY *ecx;           /* X25519, X448, Ed25519, Ed448 */
-		# endif
-	} pkey;
-	int save_parameters;
-	//   STACK_OF(X509_ATTRIBUTE) *attributes; /* [ 0 ] */
-	//   CRYPTO_RWLOCK *lock;
-} /* EVP_PKEY */ ;
-
-typedef struct evp_pkey_st EVP_PKEY;
-
-struct evp_pkey_method_st;
-typedef struct evp_pkey_method_st EVP_PKEY_METHOD;
-
-struct evp_pkey_ctx_st {
-	/* Method associated with this operation */
-	const EVP_PKEY_METHOD *pmeth;
-	/* Engine that implements this method or NULL if builtin */
-	ENGINE *engine;
-	/* Key: may be NULL */
-	EVP_PKEY *pkey;
-	/* Peer key for key agreement, may be NULL */
-	EVP_PKEY *peerkey;
-	/* Actual operation */
-	int operation;
-	/* Algorithm specific data */
-	void *data;
-	/* Application specific data */
-	void *app_data;
-	/* Keygen callback */
-	//EVP_PKEY_gen_cb *pkey_gencb;
-	/* implementation specific keygen data */
-	int *keygen_info;
-	int keygen_info_count;
-} /* EVP_PKEY_CTX */ ;
-
-struct evp_pkey_method_st {
-	int pkey_id;
-	int flags;
-	int (*init) (EVP_PKEY_CTX *ctx);
-	int (*copy) (EVP_PKEY_CTX *dst, EVP_PKEY_CTX *src);
-	void (*cleanup) (EVP_PKEY_CTX *ctx);
-	int (*paramgen_init) (EVP_PKEY_CTX *ctx);
-	int (*paramgen) (EVP_PKEY_CTX *ctx, EVP_PKEY *pkey);
-	int (*keygen_init) (EVP_PKEY_CTX *ctx);
-	int (*keygen) (EVP_PKEY_CTX *ctx, EVP_PKEY *pkey);
-	int (*sign_init) (EVP_PKEY_CTX *ctx);
-	int (*sign) (EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen,
-			const unsigned char *tbs, size_t tbslen);
-	int (*verify_init) (EVP_PKEY_CTX *ctx);
-	int (*verify) (EVP_PKEY_CTX *ctx,
-			const unsigned char *sig, size_t siglen,
-			const unsigned char *tbs, size_t tbslen);
-	int (*verify_recover_init) (EVP_PKEY_CTX *ctx);
-	int (*verify_recover) (EVP_PKEY_CTX *ctx,
-				unsigned char *rout, size_t *routlen,
-				const unsigned char *sig, size_t siglen);
-	int (*signctx_init); // (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
-	int (*signctx); /* (EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen,
-			EVP_MD_CTX *mctx); */
-	int (*verifyctx_init); // (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
-	int (*verifyctx); /* (EVP_PKEY_CTX *ctx, const unsigned char *sig, int siglen,
-			EVP_MD_CTX *mctx); */
-	int (*encrypt_init) (EVP_PKEY_CTX *ctx);
-	int (*encrypt) (EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen,
-			const unsigned char *in, size_t inlen);
-	int (*decrypt_init) (EVP_PKEY_CTX *ctx);
-	int (*decrypt) (EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen,
-			const unsigned char *in, size_t inlen);
-	int (*derive_init) (EVP_PKEY_CTX *ctx);
-	int (*derive) (EVP_PKEY_CTX *ctx, unsigned char *key, size_t *keylen);
-	int (*ctrl) (EVP_PKEY_CTX *ctx, int type, int p1, void *p2);
-	int (*ctrl_str) (EVP_PKEY_CTX *ctx, const char *type, const char *value);
-	int (*digestsign);  /*(EVP_MD_CTX *ctx, unsigned char *sig, size_t *siglen,
-			const unsigned char *tbs, size_t tbslen); */
-	int (*digestverify); /* (EVP_MD_CTX *ctx, const unsigned char *sig,
-				size_t siglen, const unsigned char *tbs,
-				size_t tbslen); */
-	int (*check) (EVP_PKEY *pkey);
-	int (*public_check) (EVP_PKEY *pkey);
-	int (*param_check) (EVP_PKEY *pkey);
-
-    int (*digest_custom); // (EVP_PKEY_CTX *ctx, EVP_MD_CTX *mctx);
-} /* EVP_PKEY_METHOD */ ;
-
-EVP_PKEY *EVP_PKEY_new(void);
-EVP_PKEY_METHOD *EVP_PKEY_meth_find(int type);
-
-int RAND_priv_bytes(unsigned char *buf, int num);
-/* **************** x25519/x448 *******************/
 
 /********************  ECC  *********************/
 enum ecc_test_item {
@@ -608,773 +395,11 @@ static char *ecc_op_str[ECC_TEST_ITEM_MAX] = {
 
 static __thread struct hpre_rsa_test_key_in *rsa_key_in = NULL;
 
-void CRYPTO_free(void *ptr, const char *file, int line);
-
-# define OPENSSL_free(addr) CRYPTO_free(addr, __FILE__, __LINE__)
-
-/* OpenSSL RSA and BN APIs */
-BIGNUM *BN_new(void);
-int BN_bn2bin(const BIGNUM *a, unsigned char *to);
-BIGNUM *BN_bin2bn(const unsigned char *s, int len, BIGNUM *ret);
-void BN_free(BIGNUM *a);
-BIGNUM *BN_dup(const BIGNUM *a);
-RSA *RSA_new(void);
-void RSA_free(RSA *rsa);
-int BN_set_word(BIGNUM *a, BN_ULONG w);
-int RSA_generate_key_ex(RSA *rsa, int bits, BIGNUM *e_value, BN_GENCB *cb);
-void RSA_get0_key(const RSA *r,
-				  const BIGNUM **n, const BIGNUM **e, const BIGNUM **d);
-void RSA_get0_factors(const RSA *r, const BIGNUM **p, const BIGNUM **q);
-void RSA_get0_crt_params(const RSA *r,
-						 const BIGNUM **dmp1, const BIGNUM **dmq1,
-						 const BIGNUM **iqmp);
-int RSA_set0_crt_params(RSA *r, BIGNUM *dmp1, BIGNUM *dmq1,
-						BIGNUM *iqmp);
-int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d);
-int RSA_set0_factors(RSA *r, BIGNUM *p, BIGNUM *q);
-int RSA_public_encrypt(int flen, const unsigned char *from,
-					   unsigned char *to, RSA *rsa, int padding);
-int RSA_private_decrypt(int flen, const unsigned char *from,
-						unsigned char *to, RSA *rsa, int padding);
-DH *DH_new(void);
-void DH_free(DH *r);
-int DH_generate_parameters_ex(DH *dh, int prime_len, int generator,
-							  BN_GENCB *cb);
-void DH_get0_pqg(const DH *dh, const BIGNUM **p, const BIGNUM **q,
-				 const BIGNUM **g);
-int DH_generate_key(DH *dh);
-void DH_get0_key(const DH *dh, const BIGNUM **pub_key,
-				 const BIGNUM **priv_key);
-int DH_set0_pqg(DH *dh, BIGNUM *p, BIGNUM *q, BIGNUM *g);
-int DH_set0_key(DH *dh, BIGNUM *pub_key, BIGNUM *priv_key);
-int DH_compute_key(unsigned char *key, const BIGNUM *pub_key, DH *dh);
-void *_hpre_sys_test_thread(void *data);
-
-EC_KEY *EC_KEY_new(void);
-int EC_KEY_set_group(EC_KEY *key, EC_GROUP *group);
-void EC_KEY_free(EC_KEY *key);
-EC_KEY *EC_KEY_new_by_curve_name(int nid);
-int EC_KEY_generate_key(EC_KEY *key);
-int ERR_load_CRYPTO_strings(void);
-int ERR_load_SSL_strings(void);
-EC_GROUP *EC_GROUP_new_by_curve_name(int nid);
-int ECDH_compute_key(void *out, size_t outlen, EC_POINT *pub_key,
-                     EC_KEY *ecdh,
-                     void *(*KDF) (void *in, size_t inlen,
-                                   void *out, size_t *outlen));
-EC_POINT *EC_GROUP_get0_generator(EC_GROUP *group);
-int DHparams_print_fp(FILE *fp, DH *x);
-int EC_KEY_set_private_key(EC_KEY *key, BIGNUM *priv_key);
-EC_POINT *EC_POINT_bn2point(EC_GROUP *, BIGNUM *,
-                            EC_POINT *, void *);
-EC_POINT *EC_POINT_dup(EC_POINT *a, EC_GROUP *group);
-EC_POINT *EC_KEY_get0_public_key(EC_KEY *key);
-BIGNUM *EC_KEY_get0_private_key(EC_KEY *key);
-int ECParameters_print_fp(FILE *fp, EC_KEY *x);
-int EC_KEY_print_fp(FILE *fp, EC_KEY *x, int off);
-int RSA_print_fp(FILE *fp, RSA *x, int off);
-void EC_POINT_free(EC_POINT *point);
-void EC_GROUP_free(EC_GROUP *group);
-size_t EC_POINT_point2buf(EC_GROUP *group, EC_POINT *point,
-                          __u32 form,
-                          char **pbuf, void *ctx);
-int EC_POINT_get_affine_coordinates_GF2m(const EC_GROUP *group,
-                                                            const EC_POINT *p,
-                                                            BIGNUM *x,
-                                                            BIGNUM *y,
-                                                            void *ctx);
-int ECDSA_sign(int type, const unsigned char *dgst, int dgstlen,
-               unsigned char *sig, unsigned int *siglen, EC_KEY *eckey);
-int ECDSA_verify(int type, const unsigned char *dgst, int dgstlen,
-                 const unsigned char *sig, int siglen, EC_KEY *eckey);
-int RAND_priv_bytes(unsigned char *buf, int num);
-int ECDSA_sign_ex(int type, const unsigned char *dgst, int dgstlen,
-                  unsigned char *sig, unsigned int *siglen,
-                  const BIGNUM *kinv, const BIGNUM *rp, EC_KEY *eckey);
-int EC_KEY_set_public_key(EC_KEY *key, const EC_POINT *pub);
-int ECDSA_sign_setup(EC_KEY *eckey, void *ctx_in, BIGNUM **kinvp,
-                     BIGNUM **rp);
-int ECDSA_SIG_set0(ECDSA_SIG *sig, BIGNUM *r, BIGNUM *s);
-void ECDSA_SIG_free(ECDSA_SIG *sig);
-ECDSA_SIG *ECDSA_SIG_new(void);
-ECDSA_SIG *ECDSA_do_sign(const unsigned char *dgst, int dgst_len,
-                         EC_KEY *eckey);
-const BIGNUM *ECDSA_SIG_get0_r(const ECDSA_SIG *sig);
-const BIGNUM *ECDSA_SIG_get0_s(const ECDSA_SIG *sig);
-int ECDSA_do_verify(const unsigned char *dgst, int dgst_len,
-                    const ECDSA_SIG *sig, EC_KEY *eckey);
-int ECDSA_size(const EC_KEY *eckey);
-
-//SM2
-const EVP_MD *EVP_sm3(void);
-int EVP_MD_size(const EVP_MD *md);
-int EVP_DigestInit(EVP_MD_CTX *ctx, const EVP_MD *type);
-int EVP_DigestFinal(EVP_MD_CTX *ctx, unsigned char *md, unsigned int *s);
-int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *d, size_t cnt);
-EVP_MD_CTX *EVP_MD_CTX_new(void);
-EC_GROUP *EC_GROUP_new_curve_GFp(const BIGNUM *p, const BIGNUM *a,
-        const BIGNUM *b, BN_CTX *ctx);
-EC_POINT *EC_POINT_new(const EC_GROUP *group);
-int EC_GROUP_set_generator(EC_GROUP *group, const EC_POINT *generator,
-                           const BIGNUM *order, const BIGNUM *cofactor);
-char *BN_bn2hex(const BIGNUM *a);
-int EC_POINT_set_affine_coordinates(const EC_GROUP *group, EC_POINT *p,
-                                     const BIGNUM *x, const BIGNUM *y,
-                                     BN_CTX *ctx);
-const RAND_METHOD *RAND_get_rand_method(void);
-unsigned char *OPENSSL_hexstr2buf(const char *str, long *len);
-char *OPENSSL_buf2hexstr(const unsigned char *buffer, long len);
-void RAND_set_rand_method(const RAND_METHOD *meth);
-ECDSA_SIG *sm2_do_sign(const EC_KEY *key,
-                       const EVP_MD *digest,
-                       const uint8_t *id,
-                       const size_t id_len,
-                       const uint8_t *msg, size_t msg_len);
-EVP_PKEY *EVP_PKEY_new(void);
-int EVP_PKEY_set1_EC_KEY(EVP_PKEY *pkey, struct ec_key_st *key);
-int EVP_PKEY_set_alias_type(EVP_PKEY *pkey, int type);
-EVP_MD_CTX *EVP_MD_CTX_new(void);
-EVP_PKEY_CTX *EVP_PKEY_CTX_new(EVP_PKEY *pkey, ENGINE *e);
-void EVP_MD_CTX_set_pkey_ctx(EVP_MD_CTX *ctx, EVP_PKEY_CTX *pctx);
-int EVP_PKEY_CTX_ctrl(EVP_PKEY_CTX *ctx, int keytype, int optype,
-        int cmd, int p1, void *p2);
-int EVP_DigestSignInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx, const EVP_MD *type,
-        ENGINE *e, EVP_PKEY *pkey);
-int EVP_DigestSignFinal(EVP_MD_CTX *ctx, unsigned char *sigret, size_t *siglen);
-int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *d, size_t cnt);
-int EVP_PKEY_sign_init(EVP_PKEY_CTX *ctx);
-int EVP_PKEY_sign(EVP_PKEY_CTX *ctx,
-                unsigned char *sig, size_t *siglen,
-                const unsigned char *tbs, size_t tbslen);
-int EVP_DigestSign(EVP_MD_CTX *ctx, unsigned char *sigret,
-                   size_t *siglen, const unsigned char *tbs,
-                   size_t tbslen);
-void EVP_PKEY_free(EVP_PKEY *pkey);
-void EVP_MD_CTX_free(EVP_MD_CTX *ctx);
-void EVP_PKEY_CTX_free(EVP_PKEY_CTX *ctx);
-int BN_hex2bn(BIGNUM **a, const char *str);
-struct ec_key_st *EVP_PKEY_get0_EC_KEY(EVP_PKEY *pkey);
-struct ec_key_st *EVP_PKEY_get1_EC_KEY(EVP_PKEY *pkey);
-void *EVP_PKEY_get0(EVP_PKEY *pkey);
-EVP_PKEY *EVP_PKEY_CTX_get0_pkey(EVP_PKEY_CTX *ctx);
-EVP_PKEY_CTX *EVP_MD_CTX_pkey_ctx(EVP_MD_CTX *md_ctx);
-int EVP_DigestVerify(EVP_MD_CTX *ctx, const unsigned char *sigret,
-                size_t siglen, const unsigned char *tbs,
-                size_t tbslen);
-int EVP_DigestVerifyInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx,
-                        const EVP_MD *type, ENGINE *e,
-                        EVP_PKEY *pkey);
-int EVP_DigestVerifyFinal(EVP_MD_CTX *ctx, const unsigned char *sig,
-                        size_t siglen);
-const EVP_MD *EVP_sm3(void);
-const EC_GROUP *EC_KEY_get0_group(const EC_KEY *key);
-int EVP_PKEY_decrypt_init(EVP_PKEY_CTX *ctx);
-int EVP_PKEY_decrypt(EVP_PKEY_CTX *ctx,
-                unsigned char *out, size_t *outlen,
-                const unsigned char *in, size_t inlen);
-int EVP_PKEY_encrypt_init(EVP_PKEY_CTX *ctx);
-int EVP_PKEY_encrypt(EVP_PKEY_CTX *ctx,
-                unsigned char *out, size_t *outlen,
-                const unsigned char *in, size_t inlen);
-int EVP_PKEY_verify_init(EVP_PKEY_CTX *ctx);
-int EVP_PKEY_verify(EVP_PKEY_CTX *ctx,
-                    const unsigned char *sig, size_t siglen,
-                    const unsigned char *tbs, size_t tbslen);
-void ERR_print_errors_fp(FILE *fp);
-
-const EVP_MD *EVP_sha1(void);
-const EVP_MD *EVP_sha224(void);
-const EVP_MD *EVP_sha256(void);
-const EVP_MD *EVP_sha384(void);
-const EVP_MD *EVP_sha512(void);
-const EVP_MD *EVP_md4(void);
-const EVP_MD *EVP_md5(void);
-
-#define EVP_PKEY_CTRL_MD				1
-#define EVP_PKEY_ALG_CTRL				0x1000
-#define EVP_PKEY_CTRL_EC_PARAMGEN_CURVE_NID             (EVP_PKEY_ALG_CTRL + 1)
-#define EVP_PKEY_CTRL_EC_PARAM_ENC                      (EVP_PKEY_ALG_CTRL + 2)
-#define EVP_PKEY_CTRL_EC_ECDH_COFACTOR                  (EVP_PKEY_ALG_CTRL + 3)
-#define EVP_PKEY_CTRL_EC_KDF_TYPE                       (EVP_PKEY_ALG_CTRL + 4)
-#define EVP_PKEY_CTRL_EC_KDF_MD                         (EVP_PKEY_ALG_CTRL + 5)
-#define EVP_PKEY_CTRL_GET_EC_KDF_MD                     (EVP_PKEY_ALG_CTRL + 6)
-#define EVP_PKEY_CTRL_EC_KDF_OUTLEN                     (EVP_PKEY_ALG_CTRL + 7)
-#define EVP_PKEY_CTRL_GET_EC_KDF_OUTLEN                 (EVP_PKEY_ALG_CTRL + 8)
-#define EVP_PKEY_CTRL_EC_KDF_UKM                        (EVP_PKEY_ALG_CTRL + 9)
-#define EVP_PKEY_CTRL_GET_EC_KDF_UKM                    (EVP_PKEY_ALG_CTRL + 10)
-#define EVP_PKEY_CTRL_SET1_ID                           (EVP_PKEY_ALG_CTRL + 11)
-#define EVP_PKEY_CTRL_GET1_ID                           (EVP_PKEY_ALG_CTRL + 12)
-#define EVP_PKEY_CTRL_GET1_ID_LEN                       (EVP_PKEY_ALG_CTRL + 13)
-#define EVP_PKEY_CTX_set1_id(ctx, id, id_len) \
-	EVP_PKEY_CTX_ctrl(ctx, -1, -1, \
-		EVP_PKEY_CTRL_SET1_ID, (int)id_len, (void *)id)
-
-#ifndef HAVE_CRYPTO
-BIGNUM *BN_new(void)
-{
-	return NULL;
-}
-
-int BN_bn2bin(const BIGNUM *a, unsigned char *to)
-{
-	return 0;
-}
-BIGNUM *BN_bin2bn(const unsigned char *s, int len, BIGNUM *ret)
-{
-	void *buf;
-
-	buf = malloc(len);
-	if (!buf)
-		return NULL;
-
-	memcpy(buf, s, len);
-
-	return buf;
-}
-
-void BN_free(BIGNUM *a)
-{
-	return;
-}
-
-BIGNUM *BN_dup(const BIGNUM *a)
-{
-	return NULL;
-}
-
-RSA *RSA_new(void)
-{
-	return NULL;
-}
-
-void RSA_free(RSA *rsa)
-{
-	return;
-}
-
-int BN_set_word(BIGNUM *a, BN_ULONG w)
-{
-	return 0;
-}
-
-int RSA_generate_key_ex(RSA *rsa, int bits, BIGNUM *e_value, BN_GENCB *cb)
-{
-	return 0;
-}
-
-void RSA_get0_key(const RSA *r,
-				  const BIGNUM **n, const BIGNUM **e, const BIGNUM **d)
-{
-	return;
-}
-
-void RSA_get0_factors(const RSA *r, const BIGNUM **p, const BIGNUM **q)
-{
-	return;
-}
-
-void RSA_get0_crt_params(const RSA *r,
-						 const BIGNUM **dmp1, const BIGNUM **dmq1,
-						 const BIGNUM **iqmp)
-{
-	return;
-}
-
-int RSA_set0_crt_params(RSA *r, BIGNUM *dmp1, BIGNUM *dmq1,
-						BIGNUM *iqmp)
-{
-	return 0;
-}
-
-int RSA_set0_key(RSA *r, BIGNUM *n, BIGNUM *e, BIGNUM *d)
-{
-	return 0;
-}
-
-int RSA_set0_factors(RSA *r, BIGNUM *p, BIGNUM *q)
-{
-	return 0;
-}
-
-int RSA_public_encrypt(int flen, const unsigned char *from,
-					   unsigned char *to, RSA *rsa, int padding)
-{
-	return 0;
-}
-
-int RSA_private_decrypt(int flen, const unsigned char *from,
-						unsigned char *to, RSA *rsa, int padding)
-{
-	return 0;
-}
-
-int RSA_print_fp(FILE *fp, RSA *x, int off)
-{
-	return 0;
-}
-
-DH *DH_new(void)
-{
-	return NULL;
-}
-
-void DH_free(DH *r)
-{
-	return;
-}
-
-int DH_generate_parameters_ex(DH *dh, int prime_len, int generator,
-							  BN_GENCB *cb)
-{
-	return 0;
-}
-
-void DH_get0_pqg(const DH *dh, const BIGNUM **p, const BIGNUM **q,
-				 const BIGNUM **g)
-{
-	return;
-}
-
-int DH_generate_key(DH *dh)
-{
-	return 0;
-}
-
-void DH_get0_key(const DH *dh, const BIGNUM **pub_key,
-				 const BIGNUM **priv_key)
-{
-	return;
-}
-
-int DH_set0_pqg(DH *dh, BIGNUM *p, BIGNUM *q, BIGNUM *g)
-{
-	return 0;
-}
-
-int DH_set0_key(DH *dh, BIGNUM *pub_key, BIGNUM *priv_key)
-{
-	return 0;
-}
-
-int DH_compute_key(unsigned char *key, const BIGNUM *pub_key, DH *dh)
-{
-	return 0;
-}
-
-EC_KEY *EC_KEY_new(void)
-{
-	return NULL;
-}
-
-int EC_KEY_set_group(EC_KEY *key, EC_GROUP *group)
-{
-	return 0;
-}
-
-void EC_KEY_free(EC_KEY *key)
-{
-	return;
-}
-
-EC_KEY *EC_KEY_new_by_curve_name(int nid)
-{
-	return NULL;
-}
-
-int EC_KEY_generate_key(EC_KEY *key)
-{
-	return 0;
-}
-
-int ERR_load_CRYPTO_strings(void)
-{
-	return 0;
-}
-
-int ERR_load_SSL_strings(void)
-{
-	return 0;
-}
-
-EC_GROUP *EC_GROUP_new_by_curve_name(int nid)
-{
-	return NULL;
-}
-
-int ECDH_compute_key(void *out, size_t outlen, EC_POINT *pub_key,
-                     EC_KEY *ecdh,
-                     void *(*KDF) (void *in, size_t inlen,
-                                   void *out, size_t *outlen))
-{
-	return 0;
-}
-
-EC_POINT *EC_GROUP_get0_generator(EC_GROUP *group)
-{
-	return NULL;
-}
-
-int DHparams_print_fp(FILE *fp, DH *x)
-{
-	return 0;
-}
-
-int EC_KEY_set_private_key(EC_KEY *key, BIGNUM *priv_key)
-{
-	return 0;
-}
-
-EC_POINT *EC_POINT_bn2point(EC_GROUP *group, BIGNUM *bn,
-                            EC_POINT *point, void *ff)
-{
-	return NULL;
-}
-
-EC_POINT *EC_POINT_dup(EC_POINT *a, EC_GROUP *group)
-{
-	return NULL;
-}
-
-EC_POINT *EC_KEY_get0_public_key(EC_KEY *key)
-{
-	return NULL;
-}
-
-BIGNUM *EC_KEY_get0_private_key(EC_KEY *key)
-{
-	return NULL;
-}
-
-int ECParameters_print_fp(FILE *fp, EC_KEY *x)
-{
-	return 0;
-}
-
-int EC_KEY_print_fp(FILE *fp, EC_KEY *x, int off)
-{
-	return 0;
-}
-
-void EC_POINT_free(EC_POINT *point)
-{
-	return;
-}
-
-void EC_GROUP_free(EC_GROUP *group)
-{
-	return;
-}
-
-size_t EC_POINT_point2buf(EC_GROUP *group, EC_POINT *point,
-                          __u32 form,
-                          char **pbuf, void *ctx)
-{
-	return 0;
-}
-
-int EC_POINT_get_affine_coordinates_GF2m(const EC_GROUP *group,
-                                                            const EC_POINT *p,
-                                                            BIGNUM *x,
-                                                            BIGNUM *y,
-                                                            void *ctx)
-{
-	return 0;
-}
-
-int ECDSA_sign(int type, const unsigned char *dgst, int dgstlen,
-               unsigned char *sig, unsigned int *siglen, EC_KEY *eckey)
-{
-	return 0;
-}
-
-int ECDSA_verify(int type, const unsigned char *dgst, int dgstlen,
-                 const unsigned char *sig, int siglen, EC_KEY *eckey)
-{
-	return 0;
-}
-
-int RAND_priv_bytes(unsigned char *buf, int num)
-{
-	return 0;
-}
-
-int ECDSA_sign_ex(int type, const unsigned char *dgst, int dgstlen,
-                  unsigned char *sig, unsigned int *siglen,
-                  const BIGNUM *kinv, const BIGNUM *rp, EC_KEY *eckey)
-{
-	return 0;
-}
-
-int EC_KEY_set_public_key(EC_KEY *key, const EC_POINT *pub)
-{
-	return 0;
-}
-
-int ECDSA_sign_setup(EC_KEY *eckey, void *ctx_in, BIGNUM **kinvp,
-                     BIGNUM **rp)
-{
-	return 0;
-}
-
-int ECDSA_SIG_set0(ECDSA_SIG *sig, BIGNUM *r, BIGNUM *s)
-{
-	return 0;
-}
-
-void ECDSA_SIG_free(ECDSA_SIG *sig)
-{
-	return;
-}
-
-ECDSA_SIG *ECDSA_SIG_new(void)
-{
-	return NULL;
-}
-
-ECDSA_SIG *ECDSA_do_sign(const unsigned char *dgst, int dgst_len,
-                         EC_KEY *eckey)
-{
-	return NULL;
-}
-
-const BIGNUM *ECDSA_SIG_get0_r(const ECDSA_SIG *sig)
-{
-	return NULL;
-}
-
-const BIGNUM *ECDSA_SIG_get0_s(const ECDSA_SIG *sig)
-{
-	return NULL;
-}
-
-int ECDSA_do_verify(const unsigned char *dgst, int dgst_len,
-                    const ECDSA_SIG *sig, EC_KEY *eckey)
-{
-	return 0;
-}
-
-int ECDSA_size(const EC_KEY *eckey)
-{
-	return 0;
-}
-
-EVP_PKEY_CTX *EVP_MD_CTX_pkey_ctx(EVP_MD_CTX *ctx)
-{
-	return NULL;
-}
-
-EVP_PKEY *EVP_PKEY_CTX_get0_pkey(EVP_PKEY_CTX *ctx)
-{
-	return NULL;
-}
-
-void *EVP_PKEY_get0(EVP_PKEY *pkey)
-{
-	return NULL;
-}
-
-void EVP_PKEY_free(EVP_PKEY *pkey)
-{
-	return;
-}
-
-void EVP_PKEY_CTX_free(EVP_PKEY_CTX *pctx)
-{
-	return;
-
-}
-
-void EVP_MD_CTX_free(EVP_MD_CTX *md_ctx)
-{
-	return;
-}
-
-int EVP_PKEY_CTX_ctrl(EVP_PKEY_CTX *ctx, int keytype, int optype,
-	int cmd, int p1, void *p2)
-{
-	return 0;
-}
-
-int EVP_DigestSignInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx,const EVP_MD *type,
-	ENGINE *imp, EVP_PKEY *pkey)
-{
-	return 0;
-}
-
-int EVP_DigestSign(EVP_MD_CTX *ctx, unsigned char *sigret, size_t *siglen,
-	const unsigned char *tbs, size_t tbs_len)
-{
-	return 0;
-}
-
-int EVP_DigestVerifyInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx,
-	const EVP_MD *type, ENGINE *e, EVP_PKEY *pkey)
-{
-	return 0;
-}
-
-int EVP_DigestVerifyFinal(EVP_MD_CTX *ctx, const unsigned char *sigbuf,
-	size_t siglen)
-{
-	return 0;
-}
-
-int EVP_PKEY_verify_init(EVP_PKEY_CTX *ctx)
-{
-	return 0;
-}
-
-int EVP_PKEY_verify(EVP_PKEY_CTX *ctx, const unsigned char *sig,
-	size_t siglen, const unsigned char *tbs, size_t tbslen)
-{
-	return 0;
-}
-
-int EVP_PKEY_encrypt_init(EVP_PKEY_CTX *ctx)
-{
-	return 0;
-}
-
-int EVP_PKEY_encrypt(EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen,
-	const unsigned char *in, size_t inlen)
-{
-	return 0;
-}
-
-int EVP_PKEY_decrypt_init(EVP_PKEY_CTX *ctx)
-{
-	return 0;
-}
-
-int EVP_DigestSignFinal(EVP_MD_CTX *ctx, unsigned char *sigret, size_t *siglen)
-{
-	return 0;
-}
-
-int EVP_PKEY_sign_init(EVP_PKEY_CTX *ctx)
-{
-	return 0;
-}
-
-int EVP_PKEY_sign(EVP_PKEY_CTX *ctx, unsigned char *sig, size_t *siglen,
-	const unsigned char *tbs, size_t tbslen)
-{
-	return 0;
-}
-
-int EVP_PKEY_decrypt(EVP_PKEY_CTX *ctx, unsigned char *out, size_t *outlen,
-	const unsigned char *in, size_t inlen)
-{
-	return 0;
-}
-
-const EVP_MD *EVP_sha1(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_sha224(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_sha256(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_sha384(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_sha512(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_sm3(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_md4(void)
-{
-	return NULL;
-}
-
-const EVP_MD *EVP_md5(void)
-{
-	return NULL;
-}
-
-EVP_MD_CTX *EVP_MD_CTX_new(void)
-{
-	return NULL;
-}
-
-int EVP_DigestInit(EVP_MD_CTX *ctx, const EVP_MD *type)
-{
-	return 0;
-}
-
-int EVP_DigestFinal(EVP_MD_CTX *ctx, unsigned char *md, unsigned int *s)
-{
-	return 0;
-}
-
-int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *d, size_t cnt)
-{
-	return 0;
-}
-
-unsigned char *OPENSSL_hexstr2buf(const char *str, long *len)
-{
-	return NULL;
-}
-
-char *OPENSSL_buf2hexstr(const unsigned char *buffer, long len)
-{
-	return NULL;
-}
-
-void RAND_set_rand_method(const RAND_METHOD *meth)
-{}
-
-int EVP_PKEY_set1_EC_KEY(EVP_PKEY *pkey, struct ec_key_st *key)
-{
-	return 0;
-}
-
-int EVP_PKEY_set_alias_type(EVP_PKEY *pkey, int type)
-{
-	return 0;
-}
-
-EVP_PKEY_CTX *EVP_PKEY_CTX_new(EVP_PKEY *pkey, ENGINE *e)
-{
-	return NULL;
-}
-
-void EVP_MD_CTX_set_pkey_ctx(EVP_MD_CTX *ctx, EVP_PKEY_CTX *pctx)
-{}
-
-void CRYPTO_free(void *ptr, const char *file, int line)
-{}
-
-const RAND_METHOD *RAND_get_rand_method(void)
-{
-	return NULL;
-}
-
-EVP_PKEY *EVP_PKEY_new(void)
-{
-	return NULL;
-}
-#endif
-
 #define EVP_DigestSignUpdate(a, b, c)	EVP_DigestUpdate(a, b, c)
 #define EVP_DigestVerifyUpdate(a, b, c)	EVP_DigestUpdate(a, b, c)
+
+/* Internal OpenSSL 1.1.1 function - not in public headers */
+void EVP_MD_CTX_set_pkey_ctx(EVP_MD_CTX *ctx, EVP_PKEY_CTX *pctx);
 
 static RAND_METHOD fake_rand;
 static const RAND_METHOD *saved_rand;
@@ -7281,7 +6306,6 @@ gen_fail:
 	return ret;
 }
 
-#endif
 
 int hpre_test_fill_keygen_opdata(handle_t sess, struct wd_rsa_req *req)
 {
@@ -7598,19 +6622,16 @@ new_test_again:
 
 	memset(key_info, 0, key_size * 16);
 
-	#ifdef HAVE_CRYPTO
 		ret = test_rsa_key_gen(sess, NULL, key_info, key_info, 0);
 		if (ret) {
 			HPRE_TST_PRT("thrd-%d:Openssl key gen fail!\n", thread_id);
 			goto fail_release;
 		}
-	#else
 		ret = get_rsa_key_from_test_sample(sess, NULL, key_info, key_info, 0);
 		if (ret) {
 			HPRE_TST_PRT("thrd-%d:get sample key fail!\n", thread_id);
 			goto fail_release;
 		}
-	#endif
 
 	/* always key size bytes input */
 	req.src_bytes = key_size;
@@ -8044,7 +7065,6 @@ void *_rsa_async_op_test_thread(void *data)
 	wd_rsa_get_pubkey(sess, &pubkey);
 	wd_rsa_get_pubkey_params(pubkey, &wd_e, &wd_n);
 
-#ifdef HAVE_CRYPTO
 	wd_e->dsize = BN_bn2bin(ssl_params.e, (unsigned char *)wd_e->data);
 	if (wd_e->dsize > wd_e->bsize) {
 		HPRE_TST_PRT("e bn to bin overflow!\n");
@@ -8055,17 +7075,14 @@ void *_rsa_async_op_test_thread(void *data)
 		HPRE_TST_PRT("n bn to bin overflow!\n");
 		goto fail_release;
 	}
-#else
 	memcpy(wd_e->data, ssl_params.e, key_size);
 	wd_e->dsize = key_size;
 	memcpy(wd_n->data, ssl_params.n, key_size);
 	wd_n->dsize = key_size;
-#endif
 	wd_rsa_get_prikey(sess, &prikey);
 	if (wd_rsa_is_crt(sess)) {
 		wd_rsa_get_crt_prikey_params(prikey, &wd_dq, &wd_dp, &wd_qinv, &wd_q, &wd_p);
 
-#ifdef HAVE_CRYPTO
 		/* CRT mode private key */
 		wd_dq->dsize = BN_bn2bin(ssl_params.dq, (unsigned char *)wd_dq->data);
 		if (wd_dq->dsize > wd_dq->bsize) {
@@ -8092,7 +7109,6 @@ void *_rsa_async_op_test_thread(void *data)
 			HPRE_TST_PRT("p bn to bin overflow!\n");
 			goto fail_release;
 		}
-#else
 		memcpy(wd_dq->data, ssl_params.dq, key_size / 2);
 		wd_dq->dsize = key_size / 2;
 		memcpy(wd_dp->data, ssl_params.dp, key_size / 2);
@@ -8103,38 +7119,31 @@ void *_rsa_async_op_test_thread(void *data)
 		wd_q->dsize = key_size / 2;
 		memcpy(wd_p->data, ssl_params.p, key_size / 2);
 		wd_p->dsize = key_size / 2;
-#endif
 
 	} else {
 		wd_rsa_get_prikey_params(prikey, &wd_d, &wd_n);
 
-#ifdef HAVE_CRYPTO
 		wd_d->dsize = BN_bn2bin(ssl_params.d, (unsigned char *)wd_d->data);
 		wd_n->dsize = BN_bn2bin(ssl_params.n, (unsigned char *)wd_n->data);
-#else
 		memcpy(wd_d->data, ssl_params.d, key_size);
 		wd_d->dsize = key_size;
 		memcpy(wd_n->data, ssl_params.n, key_size);
 		wd_n->dsize = key_size;
-#endif
 		wd_e = &t_e;
 		wd_p = &t_p;
 		wd_q = &t_q;
 		memset(rsa_key_in->e, 0, key_size);
 		memset(rsa_key_in->p, 0, key_size >> 1);
 		memset(rsa_key_in->q, 0, key_size >> 1);
-#ifdef HAVE_CRYPTO
 		rsa_key_in->e_size = BN_bn2bin(ssl_params.e, (unsigned char *)rsa_key_in->e);
 		rsa_key_in->p_size = BN_bn2bin(ssl_params.p, (unsigned char *)rsa_key_in->p);
 		rsa_key_in->q_size = BN_bn2bin(ssl_params.q, (unsigned char *)rsa_key_in->q);
-#else
 		memcpy(rsa_key_in->e, ssl_params.e, key_size);
 		rsa_key_in->e_size = key_size;
 		memcpy(rsa_key_in->p, ssl_params.p, key_size / 2);
 		rsa_key_in->p_size = key_size / 2;
 		memcpy(rsa_key_in->q, ssl_params.q, key_size / 2);
 		rsa_key_in->q_size = key_size / 2;
-#endif
 		wd_e->data = rsa_key_in->e;
 		wd_e->dsize = rsa_key_in->e_size;
 		wd_p->data = rsa_key_in->p;
@@ -8279,7 +7288,6 @@ static int set_ssl_plantext(void)
 	return 0;
 }
 
-#ifdef HAVE_CRYPTO
 static int rsa_openssl_key_gen_for_async_test(void)
 {
 	int ret;
@@ -8370,7 +7378,6 @@ gen_fail:
 	return ret;
 }
 
-#else
 static int rsa_sample_key_gen_for_async_test(void)
 {
 	const __u8 *p, *q, *n, *e, *d, *dp, *dq, *qinv;
@@ -8542,20 +7549,16 @@ static int rsa_async_test(int thread_num, __u64 lcore_mask,
 		HPRE_TST_PRT("Create poll thread fail!\n");
 		return ret;
 	}
-
-	#ifdef HAVE_CRYPTO
 	ret = rsa_openssl_key_gen_for_async_test();
 	if(ret) {
 		HPRE_TST_PRT("openssl genkey for async thread test fail!");
 		return 0;
 	}
-	#else
 	ret = rsa_sample_key_gen_for_async_test();
 	if(ret) {
 		HPRE_TST_PRT("sample genkey for async thread test fail!");
 		return 0;
 	}
-	#endif
 
 	if (_get_one_bits(lcore_mask) > 0)
 		cnt =  _get_one_bits(lcore_mask);
